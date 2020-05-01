@@ -1,0 +1,551 @@
+AS65 Assembler for R6502 [1.42].                                     Page    1
+-------------------------------- monitor.asm ---------------------------------
+
+493 lines read, no errors in pass 1.
+                             ;
+                             ;         PPS-2 Monitor
+                             ; Copyright Massimiliano Petra April, 2020
+                             ; massimiliano.petra@gmail.com
+                             ;
+                             ;
+                             
+                             ; Constant
+008d =                       RETURN  equ $8D         ; Return key code
+                             
+                             ; Page Zero Var
+0028 =                       SCRADDR equ $28         ; Indirect screen base ad
+                             
+                             ; Memory mappef Var
+c000 =                       KBRD    equ $C000       ; I/O Input keyboard
+c010 =                       STROBE  equ $C010       ; I/O Strobe keyboard
+0200 =                       PROMPT  equ $200        ; Prompt char
+0202 =                       JMPADR  equ $202        ; Jump address
+0280 =                       BUFFER  equ $280        ; Line buffer in
+0300 =                       VAR1    equ $300        ; Temp variable 1
+0300 =                       VAR2    equ $300        ; Temp variable 2
+0300 =                       VAR3    equ $300        ; Temp variable 3
+                             
+                             
+                             
+                             ; ***********************************************
+                             ; MACRO FUNCTIONS
+                             ; ***********************************************
+                             
+                             echo    macro
+                                     sta (SCRADDR),y
+                                     endm
+                             
+                             
+                             print   macro pos,string
+                                     ldx #0
+                                     ldy #pos
+                             loop\?  lda string,x
+                                     beq last\?
+                                     ora #$80
+                                     sta (SCRADDR),y
+                                     inx
+                                     iny 
+                                     jmp loop\?
+                             last\?
+                                     endm
+                             
+                             vout    macro l,pos,string
+                                     ldx #0
+                                     ldy #0
+                             loop\?  lda string,x
+                                     beq last\?
+                                     ora #$80
+                                     sta 1024+256*((l/2) % 4)+(128*(l % 2))+40
+                                     inx
+                                     iny 
+                                     jmp loop\?
+                             last\?
+                                     endm
+                             
+                             readline macro pos
+AS65 Assembler for R6502 [1.42].                                     Page    2
+-------------------------------- monitor.asm ---------------------------------
+
+                                     lda #pos
+                                     jsr RDLINE
+                                     endm
+                             
+                             input   macro
+                                     jsr INPUT
+                                     endm
+                                     
+                             clearline macro pos
+                                     lda #pos
+                                     jsr CLRLIN
+                                     endm
+                                     
+                             scroll  macro
+                                     jsr SCROLL
+                                     endm
+                             
+                             clrscr  macro
+                                     jsr CLRSCR
+                                     endm
+                                     
+                             ; Moniotr start
+f000 =                               org $F000
+                             
+f000 :                       START   
+f000 : d8               [ 2]         cld                     ; Disable BCD mod
+f001 : 58               [ 2]         cli                     ; Enable Interrup
+                                     clrscr                  ; Clear Screen   
+                             
+                                     vout 0,16,_SYSNAME      ; Video out Syste
+                             
+f018 : a9a3             [ 2]         lda #'#'|$80            ; Set Prompt '#'
+f01a : 8d0002           [ 4]         sta PROMPT
+f01d : a900             [ 2]         lda #0
+f01f : 8505             [ 3]         sta $5
+                             
+                             ; ***********************************************
+                             ; Main monitor loop
+                             ; ***********************************************
+                             
+f021 :                       L0      
+                                     readline 23
+                             
+                                     scroll
+                             
+                                     clearline 22
+                             
+                                     vout 22,0,BUFFER        ; Video out buffe
+                             
+f041 : 209ff1           [ 6]         jsr GETTOK
+f044 : f0db             [ 3]         beq L0                  ; Not a token rea
+f046 : 18               [ 2]         clc
+f047 : 0a               [ 2]         asl a                   ; Multiply by 2
+f048 : aa               [ 2]         tax
+f049 : bd4cf2           [ 4]         lda JUMPTABLE,x
+f04c : 8d0202           [ 4]         sta JMPADR
+f04f : e8               [ 2]         inx
+f050 : bd4cf2           [ 4]         lda JUMPTABLE,x
+f053 : 8d0302           [ 4]         sta JMPADR+1       
+f056 : 2049f2           [ 6]         jsr SYSCALL
+f059 : 4c21f0           [ 3]         jmp L0                  ; read next line
+                             
+AS65 Assembler for R6502 [1.42].                                     Page    3
+-------------------------------- monitor.asm ---------------------------------
+
+                             
+                             
+                             ; ***********************************************
+                             ; RDLINE: Read line and echo to the screen  
+                             ;   INPUT   A screem row 0 .. 23
+                             ;   OUPUT   
+                             ;   AFFECTS A,X,Y,Z,N
+                             ; ***********************************************
+                             ;
+                             
+f05c :                       RDLINE  
+f05c : 20caf0           [ 6]         jsr CLRLIN
+f05f : a000             [ 2]         ldy #$00        ; Draw prompt and flashin
+f061 : ad0002           [ 4]         lda PROMPT      
+                                     echo
+                             
+f066 : c8               [ 2]         iny
+                                     input
+                             
+f06a : 60               [ 6]         rts      
+                             
+                             ; ***********************************************
+                             ; INPUT: Input char and echo to the screen at 
+                             ;        (SCRADDR) Y pos 
+                             ;   INPUT   
+                             ;   OUPUT   
+                             ;   AFFECTS A,Y,Z,N
+                             ; ***********************************************
+                             ;
+                             
+f06b :                       INPUT  
+f06b : a200             [ 2]         ldx #0        
+f06d : a900             [ 2]         lda #0          ; Clear the buffer
+f06f :                       L11
+f06f : 9d8002           [ 5]         sta BUFFER,x
+f072 : e8               [ 2]         inx
+f073 : e029             [ 2]         cpx #41
+f075 : d0f8             [ 3]         bne L11
+f077 : a200             [ 2]         ldx #0
+f079 :                       L12
+f079 : bd8002           [ 4]         lda BUFFER,x    ; Load current buffered c
+f07c : d002             [ 3]         bne L13
+f07e : a960             [ 2]         lda #$60        ; At end position draw fl
+f080 :                       L13
+                                     echo
+                             
+f082 : 207ef1           [ 6]         jsr RDCHAR
+f085 : c98d             [ 2]         cmp #$8D        ; Return
+f087 : f014             [ 3]         beq INPUT_
+f089 : c988             [ 2]         cmp #$88
+f08b : f011             [ 3]         beq LEFT
+f08d : c995             [ 2]         cmp #$95
+f08f : f02b             [ 3]         beq RIGHT
+                                     echo            ; echo current char
+                             
+f093 : 297f             [ 2]         and #$7F
+f095 : 9d8002           [ 5]         sta BUFFER,x    ; Store data to buffer
+f098 : c8               [ 2]         iny
+f099 : e8               [ 2]         inx
+f09a : 4c79f0           [ 3]         jmp L12
+f09d :                       INPUT_ 
+f09d : 60               [ 6]         rts    
+AS65 Assembler for R6502 [1.42].                                     Page    4
+-------------------------------- monitor.asm ---------------------------------
+
+f09e :                       LEFT
+f09e : e000             [ 2]         cpx #0
+f0a0 : d003             [ 3]         bne L14         ; not a zero ok !
+f0a2 : 4c79f0           [ 3]         jmp L12         ; already at zero left im
+f0a5 :                       L14        
+f0a5 : bd8002           [ 4]         lda BUFFER,x    ; Load current buffered c
+f0a8 : d009             [ 3]         bne L15
+f0aa : a9a0             [ 2]         lda #$A0        ; At end position print u
+                                     echo
+                             
+f0ae : 88               [ 2]         dey
+f0af : ca               [ 2]         dex
+f0b0 : 4c79f0           [ 3]         jmp L12
+f0b3 :                       L15             
+f0b3 : 0980             [ 2]         ora #$80        ; Print unflashing char
+                                     echo
+                             
+f0b7 : 88               [ 2]         dey
+f0b8 : ca               [ 2]         dex
+f0b9 : 4c79f0           [ 3]         jmp L12
+f0bc :                       RIGHT   
+f0bc : bd8002           [ 4]         lda BUFFER,x    ; Load current buffered c
+f0bf : f0b8             [ 3]         beq L12
+f0c1 : 0980             [ 2]         ora #$80        ; Print unflashing char
+                                     echo
+                             
+f0c5 : e8               [ 2]         inx
+f0c6 : c8               [ 2]         iny
+f0c7 : 4c79f0           [ 3]         jmp L12
+                             
+                             
+                             ; ***********************************************
+                             ; CLRLIN: Clear screen line A 
+                             ;   INPUT   A screen row 0 .. 23
+                             ;   OUPUT   Video Text Page 1
+                             ;   AFFECTS Y
+                             ; ***********************************************
+                             ;
+                             ; Clear screen line #A
+                             ;
+                             
+f0ca :                       CLRLIN  
+f0ca : 48               [ 3]         pha
+f0cb : 2087f1           [ 6]         jsr BASCALC
+f0ce : a000             [ 2]         ldy #00
+f0d0 : a9a0             [ 2]         lda #$A0
+f0d2 :                       L1      
+                                     echo
+                             
+f0d4 : c8               [ 2]         iny
+f0d5 : c028             [ 2]         cpy #40
+f0d7 : d0f9             [ 3]         bne L1
+f0d9 : 68               [ 4]         pla
+f0da : 60               [ 6]         rts
+                             
+                             ; ***********************************************
+                             ; SCROLL: Scroll screen 
+                             ;   INPUT   
+                             ;   OUPUT   
+                             ;   AFFECTS A,X
+                             ; ***********************************************
+                             ;
+AS65 Assembler for R6502 [1.42].                                     Page    5
+-------------------------------- monitor.asm ---------------------------------
+
+f0db :                       SCROLL  
+f0db : a200             [ 2]         ldx #0
+f0dd :                       L7      
+f0dd : bd8004           [ 4]         lda $480,x
+f0e0 : 9d0004           [ 5]         sta $400,x
+f0e3 : bd0005           [ 4]         lda $500,x
+f0e6 : 9d8004           [ 5]         sta $480,x
+f0e9 : bd8005           [ 4]         lda $580,x
+f0ec : 9d0005           [ 5]         sta $500,x
+f0ef : bd0006           [ 4]         lda $600,x
+f0f2 : 9d8005           [ 5]         sta $580,x        
+f0f5 : bd8006           [ 4]         lda $680,x
+f0f8 : 9d0006           [ 5]         sta $600,x        
+f0fb : bd0007           [ 4]         lda $700,x
+f0fe : 9d8006           [ 5]         sta $680,x        
+f101 : bd8007           [ 4]         lda $780,x
+f104 : 9d0007           [ 5]         sta $700,x        
+f107 : bd2804           [ 4]         lda $428,x
+f10a : 9d8007           [ 5]         sta $780,x        
+f10d : bda804           [ 4]         lda $4A8,x
+f110 : 9d2804           [ 5]         sta $428,x        
+f113 : bd2805           [ 4]         lda $528,x
+f116 : 9da804           [ 5]         sta $4A8,x        
+f119 : bda805           [ 4]         lda $5A8,x
+f11c : 9d2805           [ 5]         sta $528,x        
+f11f : bd2806           [ 4]         lda $628,x
+f122 : 9da805           [ 5]         sta $5A8,x        
+f125 : bda806           [ 4]         lda $6A8,x
+f128 : 9d2806           [ 5]         sta $628,x        
+f12b : bd2807           [ 4]         lda $728,x
+f12e : 9da806           [ 5]         sta $6A8,x        
+f131 : bda807           [ 4]         lda $7A8,x
+f134 : 9d2807           [ 5]         sta $728,x        
+f137 : bd5004           [ 4]         lda $450,x
+f13a : 9da807           [ 5]         sta $7A8,x        
+f13d : bdd004           [ 4]         lda $4D0,x
+f140 : 9d5004           [ 5]         sta $450,x        
+f143 : bd5005           [ 4]         lda $550,x
+f146 : 9dd004           [ 5]         sta $4D0,x        
+f149 : bdd005           [ 4]         lda $5D0,x
+f14c : 9d5005           [ 5]         sta $550,x        
+f14f : bd5006           [ 4]         lda $650,x
+f152 : 9dd005           [ 5]         sta $5D0,x        
+f155 : bdd006           [ 4]         lda $6D0,x
+f158 : 9d5006           [ 5]         sta $650,x        
+f15b : bd5007           [ 4]         lda $750,x
+f15e : 9dd006           [ 5]         sta $6D0,x        
+f161 : bdd007           [ 4]         lda $7D0,x
+f164 : 9d5007           [ 5]         sta $750,x        
+f167 : e8               [ 2]         inx
+f168 : e028             [ 2]         cpx #40
+f16a : f003             [ 3]         beq L9
+f16c : 4cddf0           [ 3]         jmp L7
+f16f : 60               [ 6] L9      rts
+                                     
+                             
+                             ; ***********************************************
+                             ; CLRSCR: Clear screen 
+                             ;   INPUT   
+                             ;   OUPUT   Video Text Page 1
+                             ;   AFFECTS X
+                             ; ***********************************************
+AS65 Assembler for R6502 [1.42].                                     Page    6
+-------------------------------- monitor.asm ---------------------------------
+
+                             ;
+                             
+f170 :                       CLRSCR  
+f170 : 48               [ 3]         pha  
+f171 : a200             [ 2]         ldx #0
+f173 :                       L2      
+f173 : 8a               [ 2]         txa
+f174 : 20caf0           [ 6]         jsr CLRLIN
+f177 : e8               [ 2]         inx
+f178 : c918             [ 2]         cmp #24
+f17a : d0f7             [ 3]         bne L2
+f17c : 68               [ 4]         pla
+f17d : 60               [ 6]         rts
+                             
+                                     
+                             ; ***********************************************
+                             ; RDCHAR: Read char from keyboard  
+                             ;   INPUT   
+                             ;   OUPUT   A
+                             ;   AFFECTS A,N,Z
+                             ; ***********************************************
+                             ;        
+                             ; Read a single char and returns its value in A
+                             ;
+                             
+f17e : ad00c0           [ 4] RDCHAR  lda KBRD
+f181 : 10fb             [ 3]         bpl RDCHAR
+f183 : 2c10c0           [ 4]         bit STROBE
+f186 : 60               [ 6]         rts
+                             
+                             ; ***********************************************
+                             ; BASCALC: Compute the screen line base address
+                             ;   INPUT   A
+                             ;   OUPUT   SCRADDR,SCRADDR+1
+                             ;   AFFECTS A
+                             ; ***********************************************
+                             ;        
+                             ; Form Apple Monitor Peeled:  A is the screen lin
+                             ; A can be thought as  A = 000ABCDE
+                             ; The base address for text page 1 is: SCRADDR = 
+                             ; The routine runs in 40 machine cycles          
+                             ;
+                             
+f187 : 48               [ 3] BASCALC pha             ; A = 000ABCDE
+f188 : 4a               [ 2]         lsr a           ; A = 0000ABCD, C = E
+f189 : 2903             [ 2]         and #3          ; A = 000000CD
+f18b : 0904             [ 2]         ora #4          ; A = 000001CD
+f18d : 8529             [ 3]         sta SCRADDR+1   ; Store hi byte
+f18f : 68               [ 4]         pla             ; A = 000ABCDE
+f190 : 2918             [ 2]         and #$18        ; A = 000AB000
+f192 : 9002             [ 3]         bcc L6          ; 
+f194 : 697f             [ 2]         adc #$7F        ; A = E00AB000
+f196 : 8528             [ 3] L6      sta SCRADDR     ; SCRADDR = E00AB000
+f198 : 0a               [ 2]         asl a           ; A = 00AB0000, C = E 
+f199 : 0a               [ 2]         asl a           ; A = 0AB00000, C = 0
+f19a : 0528             [ 3]         ora SCRADDR     ; A = EABAB000
+f19c : 8528             [ 3]         sta SCRADDR     ; SCRADDR = EABAB000
+f19e : 60               [ 6]         rts
+                             
+                             ; ***********************************************
+                             ; GETTOK: String compare
+                             ;   INPUT   
+AS65 Assembler for R6502 [1.42].                                     Page    7
+-------------------------------- monitor.asm ---------------------------------
+
+                             ;   OUPUT   A token number
+                             ;   AFFECTS A,X,Y,VAR1
+                             ; ***********************************************
+                             
+f19f :                       GETTOK
+f19f : a900             [ 2]         lda #0
+f1a1 : 8d0003           [ 4]         sta VAR1
+f1a4 : a000             [ 2]         ldy #0
+f1a6 :                       L20             
+f1a6 : a200             [ 2]         ldx #0
+f1a8 :                       L21        
+f1a8 : bd8002           [ 4]         lda BUFFER,x
+f1ab : d002             [ 3]         bne L22         
+f1ad : a920             [ 2]         lda #$20        ; if end of input string 
+f1af :                       L22
+f1af : d998f2           [ 4]         cmp KEYWORD,y
+f1b2 : d00f             [ 3]         bne NOTTHIS
+f1b4 : c920             [ 2]         cmp #$20        ; string are equal 
+f1b6 : f005             [ 3]         beq TOKFOUND
+f1b8 : e8               [ 2]         inx             ; compare next char
+f1b9 : c8               [ 2]         iny
+f1ba : 4ca8f1           [ 3]         jmp L21        
+f1bd :                       TOKFOUND        
+f1bd : ad0003           [ 4]         lda VAR1
+f1c0 : 0980             [ 2]         ora #$80
+f1c2 : 60               [ 6]         rts
+f1c3 :                       NOTTHIS
+f1c3 : ee0003           [ 6]         inc VAR1
+f1c6 :                       L23
+f1c6 : b998f2           [ 4]         lda KEYWORD,y
+f1c9 : f008             [ 3]         beq TOKNOTFOUND ; if keyword == 0 Token N
+f1cb : c8               [ 2]         iny             ; else point to next keyw
+f1cc : c920             [ 2]         cmp #$20         
+f1ce : f0d6             [ 3]         beq L20         ; If keyword == space Sta
+f1d0 : 4cc6f1           [ 3]         jmp L23         ; Keep on search end of k
+f1d3 :                       TOKNOTFOUND 
+f1d3 : a900             [ 2]         lda #0          ; Token Not Found
+f1d5 : 60               [ 6]         rts
+                                      
+                             
+                             ; ***********************************************
+                             ; PRINTHEX: Print A ad hexadecimal at echo positi
+                             ;   INPUT   
+                             ;   OUPUT   screen
+                             ;   AFFECTS A,N,Z,C
+                             ; ***********************************************
+                                     
+f1d6 :                       PRINTHEX
+f1d6 : c8               [ 2]         iny             ; print low nibble first 
+f1d7 : 48               [ 3]         pha             
+f1d8 : 290f             [ 2]         and #$0f        ; extract low nibble
+f1da : c90a             [ 2]         cmp #10         ; if nibble >= 10
+f1dc : 9002             [ 3]         bcc L30        
+f1de : 6906             [ 2]         adc #6          ; add ascii 6
+f1e0 :                       L30        
+f1e0 : 69b0             [ 2]         adc #$B0        ; add ascii '0'
+                                     echo
+                             
+f1e4 : 88               [ 2]         dey             ; print high nibble first
+f1e5 : 68               [ 4]         pla
+f1e6 : 4a               [ 2]         lsr a
+f1e7 : 4a               [ 2]         lsr a
+AS65 Assembler for R6502 [1.42].                                     Page    8
+-------------------------------- monitor.asm ---------------------------------
+
+f1e8 : 4a               [ 2]         lsr a
+f1e9 : 4a               [ 2]         lsr a
+f1ea : c90a             [ 2]         cmp #10
+f1ec : 9002             [ 3]         bcc L31
+f1ee : 6906             [ 2]         adc #6
+f1f0 :                       L31        
+f1f0 : 69b0             [ 2]         adc #$B0
+                                     echo        
+                             
+f1f4 : 60               [ 6]         rts
+                                     
+                             ; ***********************************************
+                             ; HELLO: Print Hello message on row 22
+                             ;   INPUT   
+                             ;   OUPUT
+                             ;   AFFECTS 
+                             ; ***********************************************
+                             
+f1f5 :                       HELLO
+                                     scroll
+                             
+                                     clearline 22
+                             
+                                     vout 22,0,_S1   ; Video out hello message
+                             
+f210 : 60               [ 6]         rts
+                             
+                             ; ***********************************************
+                             ; HELLO: Print Hello message on row 22
+                             ;   INPUT   
+                             ;   OUPUT
+                             ;   AFFECTS 
+                             ; ***********************************************
+                             
+f211 :                       DUMP
+                                     scroll
+                             
+                                     clearline 22
+                             
+                                     vout 22,0,_S2   ; Video out hello message
+                             
+f22c : 60               [ 6]         rts
+                                     
+                             ; ***********************************************
+                             ; HELLO: Print Hello message on row 22
+                             ;   INPUT   
+                             ;   OUPUT
+                             ;   AFFECTS 
+                             ; ***********************************************
+                             
+f22d :                       GO
+                                     scroll
+                             
+                                     clearline 22
+                             
+                                     vout 22,0,_S3   ; Video out hello message
+                             
+f248 : 60               [ 6]         rts
+                                     
+                             ; **************************************
+                             ; Jump table 
+                             ; **************************************
+AS65 Assembler for R6502 [1.42].                                     Page    9
+-------------------------------- monitor.asm ---------------------------------
+
+f249 :                       SYSCALL
+f249 : 6c0202           [ 6]         jmp (JMPADR)
+f24c :                       JUMPTABLE 
+f24c : f5f1                          dw HELLO
+f24e : 11f2                          dw DUMP
+f250 : 2df2                          dw GO
+                                     
+                             ; **************************************
+                             ; Strings 
+                             ; **************************************
+                             
+f252 : 5050532d3200          _SYSNAME db "PPS-2",0
+f258 : 48454c4c4f2054..      _S1      db "HELLO THIS IS PPS-2 SYSTEM MONITOR V
+f280 : 54484953204953..      _S2      db "THIS IS DUMP",0
+f28d : 54484953204953..      _S3      db "THIS IS GO",0
+f298 : 48454c4c4f2044..      KEYWORD  db "HELLO DUMP GO ",0 
+                              
+                             ; Interrupt vector
+fffa =                               org $FFFA
+                             
+fffa : 0000                          dw $0000        ; NMI
+fffc : 00f0                          dw START        ; RESET
+fffe : 0000                          dw $0000        ; IRQ
+                             
+No errors in pass 2.
+Wrote binary from address $f000 through $ffff.
+Total size 4096 bytes.
+

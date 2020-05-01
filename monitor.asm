@@ -15,6 +15,7 @@ SCRADDR equ $28         ; Indirect screen base address for echo (low address)
 KBRD    equ $C000       ; I/O Input keyboard
 STROBE  equ $C010       ; I/O Strobe keyboard
 PROMPT  equ $200        ; Prompt char
+JMPADR  equ $202        ; Jump address
 BUFFER  equ $280        ; Line buffer in
 VAR1    equ $300        ; Temp variable 1
 VAR2    equ $300        ; Temp variable 2
@@ -100,14 +101,19 @@ L0
         readline 23
         scroll
         clearline 22
-        vout 22,0,BUFFER      ; Video out buffered line
+        vout 22,0,BUFFER        ; Video out buffered line
         jsr GETTOK
-        pha
-        clearline 0
-        ldy #0
-        pla
-        jsr PRINTHEX
-        jmp L0
+        beq L0                  ; Not a token read next line
+        clc
+        asl a                   ; Multiply by 2
+        tax
+        lda JUMPTABLE,x
+        sta JMPADR
+        inx
+        lda JUMPTABLE,x
+        sta JMPADR+1       
+        jsr SYSCALL
+        jmp L0                  ; read next line
 
 
 
@@ -373,6 +379,7 @@ L22
         jmp L21        
 TOKFOUND        
         lda VAR1
+        ora #$80
         rts
 NOTTHIS
         inc VAR1
@@ -381,31 +388,31 @@ L23
         beq TOKNOTFOUND ; if keyword == 0 Token Not Found
         iny             ; else point to next keyword char
         cmp #$20         
-        beq L20          ; If keyword == space Star check next keyword 
+        beq L20         ; If keyword == space Star check next keyword 
         jmp L23         ; Keep on search end of keyword
 TOKNOTFOUND 
-        lda #$ff          ; Token Not Found
+        lda #0          ; Token Not Found
         rts
          
 
 ; ***************************************************
 ; PRINTHEX: Print A ad hexadecimal at echo position
 ;   INPUT   
-;   OUPUT   A token number
-;   AFFECTS 
+;   OUPUT   screen
+;   AFFECTS A,N,Z,C
 ; ***************************************************
         
 PRINTHEX
-        iny
-        pha
-        and #$0f
-        cmp #10
+        iny             ; print low nibble first (increment y)
+        pha             
+        and #$0f        ; extract low nibble
+        cmp #10         ; if nibble >= 10
         bcc L30        
-        adc #6
+        adc #6          ; add ascii 6
 L30        
-        adc #$B0
+        adc #$B0        ; add ascii '0'
         echo
-        dey
+        dey             ; print high nibble first (decrement y)
         pla
         lsr a
         lsr a
@@ -419,13 +426,63 @@ L31
         echo        
         rts
         
+; ***************************************************
+; HELLO: Print Hello message on row 22
+;   INPUT   
+;   OUPUT
+;   AFFECTS 
+; ***************************************************
 
+HELLO
+        scroll
+        clearline 22
+        vout 22,0,_S1   ; Video out hello message
+        rts
+
+; ***************************************************
+; HELLO: Print Hello message on row 22
+;   INPUT   
+;   OUPUT
+;   AFFECTS 
+; ***************************************************
+
+DUMP
+        scroll
+        clearline 22
+        vout 22,0,_S2   ; Video out hello message
+        rts
+        
+; ***************************************************
+; HELLO: Print Hello message on row 22
+;   INPUT   
+;   OUPUT
+;   AFFECTS 
+; ***************************************************
+
+GO
+        scroll
+        clearline 22
+        vout 22,0,_S3   ; Video out hello message
+        rts
+        
+; **************************************
+; Jump table 
+; **************************************
+SYSCALL
+        jmp (JMPADR)
+JUMPTABLE 
+        dw HELLO
+        dw DUMP
+        dw GO
+        
 ; **************************************
 ; Strings 
 ; **************************************
 
 _SYSNAME db "PPS-2",0
-_S1      db "TOKEN FOUND",0
+_S1      db "HELLO THIS IS PPS-2 SYSTEM MONITOR V1.0",0
+_S2      db "THIS IS DUMP",0
+_S3      db "THIS IS GO",0
 KEYWORD  db "HELLO DUMP GO ",0 
  
 ; Interrupt vector

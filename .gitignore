@@ -1,6 +1,5 @@
 # Compiled Object files
 *.o
-*.lst
 
 # Compiled Dynamic libraries
 *.dll
