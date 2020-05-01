@@ -1,0 +1,26 @@
+# Compiled Object files
+*.o
+*.lst
+
+# Compiled Dynamic libraries
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.bin
+
+# Configuration files
+*.cfg
+
+# Supplementary directories
+
+
+# Gif Help Pictures
+*.gif
+
+
