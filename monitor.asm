@@ -8,19 +8,29 @@
 ; Constant
 RETURN  equ $8D         ; Return key code
 
-; Page Zero Var
+; Page Zero Ptr
 SCRADDR equ $28         ; Indirect screen base address for echo (low address)
+PVAR1   equ $30         ; Temp pointer 1
+PVAR2   equ $32         ; Temp pointer 2
+PVAR3   equ $34         ; Temp pointer 3
 
-; Memory mappef Var
-KBRD    equ $C000       ; I/O Input keyboard
-STROBE  equ $C010       ; I/O Strobe keyboard
+
+; Memory mapped Var
+
+STACK   equ $100        ; Stack bottom reference
 PROMPT  equ $200        ; Prompt char
 JMPADR  equ $202        ; Jump address
+SCRROW  equ $203        ; Screen row 0..23 to print
+SCRCOL  equ $204        ; Screen col 0..39 to print
 BUFFER  equ $280        ; Line buffer in
 VAR1    equ $300        ; Temp variable 1
-VAR2    equ $300        ; Temp variable 2
-VAR3    equ $300        ; Temp variable 3
+VAR2    equ $302        ; Temp variable 2
+VAR3    equ $304        ; Temp variable 3
 
+; I/O Address
+
+KBRD    equ $C000       ; I/O Input keyboard
+STROBE  equ $C010       ; I/O Strobe keyboard
 
 
 ; ***************************************************
@@ -29,20 +39,6 @@ VAR3    equ $300        ; Temp variable 3
 
 echo    macro
         sta (SCRADDR),y
-        endm
-
-
-print   macro pos,string
-        ldx #0
-        ldy #pos
-loop\?  lda string,x
-        beq last\?
-        ora #$80
-        sta (SCRADDR),y
-        inx
-        iny 
-        jmp loop\?
-last\?
         endm
 
 vout    macro l,pos,string
@@ -87,7 +83,7 @@ START
         cld                     ; Disable BCD mode
         cli                     ; Enable Interrupt
         clrscr                  ; Clear Screen    
-        vout 0,16,_SYSNAME      ; Video out System Name
+        jsr HELLO               ; Video out hello message
         lda #'#'|$80            ; Set Prompt '#'
         sta PROMPT
         lda #0
@@ -104,7 +100,24 @@ L0
         vout 22,0,BUFFER        ; Video out buffered line
         jsr GETTOK
         beq L0                  ; Not a token read next line
-        clc
+
+; ***** Call token subroutine *****
+
+        pha                     ; Store token value
+        clc                     
+        
+        
+        txa                     ; Store x to PTR1
+        sta PVAR1
+        lda #lo BUFFER          ; Increment low buffer with x
+        adc PVAR1               ; 
+        sta PVAR1               ; Stotre low ptr already
+        lda #0                  ; Increment high buffer with carry
+        adc #hi BUFFER
+        sta PVAR1+1
+
+; System call from lookup table        
+        pla                     ; Get token
         asl a                   ; Multiply by 2
         tax
         lda JUMPTABLE,x
@@ -113,6 +126,8 @@ L0
         lda JUMPTABLE,x
         sta JMPADR+1       
         jsr SYSCALL
+
+; Go to next loop        
         jmp L0                  ; read next line
 
 
@@ -223,6 +238,54 @@ L1
         bne L1
         pla
         rts
+
+; ***************************************************
+; PRINT: Print char A at SCRROW,SCRCOL and increment the cursor position
+;   INPUT   A char to print, SCRROW,SCRCOL position 
+;   OUPUT   none
+;   AFFECTS none
+; ***************************************************
+;
+; Clear screen line #A
+;
+
+PRINT
+        pha             ; Store A
+        tya             ; Store Y
+        pha          
+        txa             ; Store X
+        pha
+        
+        tsx             ; Reference to stack
+        
+        lda SCRROW      ; Load cursor row
+        jsr BASCALC     ; Compute screen line
+        ldy SCRCOL      ; Load cursor col 
+        
+        lda STACK+3,x   ; Direct access to A
+        echo
+        
+        iny             ; increment cursor position
+        cmp #40
+        bne PRINT_
+        ldy SCRROW
+        iny
+        cmp #24
+        beq PRINT2
+        sty  SCRROW
+PRINT2  
+        ldy #0
+PRINT_        
+        sty SCRCOL
+        pla
+        tax
+        pla 
+        tay
+        pla
+        rts
+        
+        
+        
 
 ; ***************************************************
 ; SCROLL: Scroll screen 
@@ -355,7 +418,7 @@ L6      sta SCRADDR     ; SCRADDR = E00AB000
 ; ***************************************************
 ; GETTOK: String compare
 ;   INPUT   
-;   OUPUT   A token number
+;   OUPUT   A token number, X last pos BUFFER
 ;   AFFECTS A,X,Y,VAR1
 ; ***************************************************
 
@@ -394,12 +457,74 @@ TOKNOTFOUND
         lda #0          ; Token Not Found
         rts
          
+; ***************************************************
+; GETHEX: Get hexadecimal value
+;   INPUT   A hex digit
+;   OUPUT   A hex vale or $80 if invalid
+;   AFFECTS A,C
+; ***************************************************
+
+GETHEX
+        clc
+        eor #'0'        ; compare with digit 0
+        cmp #10
+        bcc ISDIGIT     ; Is lower than 10 -> is digit
+        adc #$88        ; Translate A-F to FA-FF 
+        cmp #$FA 
+        bcc NOTHEX      ; Is out of range -> not an hex digit 
+ISDIGIT
+        and #$0f
+        rts
+NOTHEX  lda #$80      
+        rts
 
 ; ***************************************************
-; PRINTHEX: Print A ad hexadecimal at echo position
+; GETADR: Get hexadecimal address
+;   INPUT   (PVAR1),y pointer to buffer with hex string
+;   OUPUT   A: $0 for valid address $80 for invalid address, PVAR2 pointer to decoded address
+;   AFFECTS A,X,Y,C
+; ***************************************************
+
+GETADR 
+        lda (PVAR1),y
+        jsr GETHEX
+        bmi GETADR_
+        asl a
+        asl a
+        asl a
+        asl a
+        sta PVAR2+1
+        iny
+        lda (PVAR1),y
+        jsr GETHEX
+        bmi GETADR_
+        ora PVAR2+1
+        sta PVAR2+1
+        iny
+        lda (PVAR1),y
+        jsr GETHEX
+        bmi GETADR_
+        asl a
+        asl a
+        asl a
+        asl a
+        sta PVAR2
+        iny
+        lda (PVAR1),y
+        jsr GETHEX
+        bmi GETADR_
+        ora PVAR2
+        sta PVAR2
+        lda #0
+GETADR_
+        rts
+
+
+; ***************************************************
+; PRINTHEX: Print A as hexadecimal at echo position
 ;   INPUT   
 ;   OUPUT   screen
-;   AFFECTS A,N,Z,C
+;   AFFECTS A,Y,N,Z,C
 ; ***************************************************
         
 PRINTHEX
@@ -423,7 +548,26 @@ L30
         adc #6
 L31        
         adc #$B0
-        echo        
+        echo 
+        iny             ; move cursor to next print
+        iny
+        rts
+      
+; ***************************************************
+; PRINTHEXNIBBLE: Print low A nibble as hexadecimal at echo position
+;   INPUT   
+;   OUPUT   screen
+;   AFFECTS A,N,Z,C
+; ***************************************************
+        
+PRINTHEXNIBBLE            
+        and #$0f        ; extract low nibble
+        cmp #10         ; if nibble >= 10
+        bcc L32        
+        adc #6          ; add ascii 6
+L32        
+        adc #$B0        ; add ascii '0' or $80
+        echo
         rts
         
 ; ***************************************************
@@ -436,33 +580,142 @@ L31
 HELLO
         scroll
         clearline 22
-        vout 22,0,_S1   ; Video out hello message
+        vout 22,0,_HELLO   ; Video out hello message
+        scroll
+        clearline 22
+
         rts
 
 ; ***************************************************
-; HELLO: Print Hello message on row 22
+; DUMP: Print Hello message on row 22
 ;   INPUT   
 ;   OUPUT
 ;   AFFECTS 
 ; ***************************************************
 
 DUMP
+
+; scroll and clear line 22
         scroll
         clearline 22
-        vout 22,0,_S2   ; Video out hello message
+        scroll
+        clearline 22
+        
+; skip to first non empty char
+        ldy #0
+DUMP0        
+        lda (PVAR1),y   ; Get next char
+        beq DUMPerr
+        iny
+        cmp #' '        ; if is space go to next char 
+        beq DUMP0
+        dey
+        jsr GETADR
+        bmi DUMPerr     ; not a valid address
+
+; print address        
+        ldy #0
+        lda PVAR2+1
+        jsr PRINTHEX
+        lda PVAR2
+        jsr PRINTHEX     
+        lda #$ba
+        echo
+        iny
+        iny
+        
+        lda #0
+        sta VAR1
+        sta VAR2
+
+DUMP1                
+        ldx #0          ; load pointed value
+        lda (PVAR2,x)
+        jsr PRINTHEX
+
+        lda PVAR2       ; increment pointer
+        adc #1
+        sta PVAR2
+        lda PVAR2+1
+        adc #0
+        sta PVAR2+1
+        
+        lda VAR1        ; increment column print counter
+        adc #1
+        sta VAR1
+        cmp #8
+        beq DUMP2
+        iny
+        
+        jmp DUMP1
+
+DUMP2        
+        
+; print updated address    
+        lda #0
+        sta VAR1
+    
+        scroll
+        clearline 22
+
+        ldy #0
+        lda PVAR2+1
+        jsr PRINTHEX
+        lda PVAR2
+        jsr PRINTHEX     
+        lda #$ba
+        echo  
+        iny
+        iny
+
+        lda VAR2        ; increment row print counter
+        adc #1
+        sta VAR2
+        cmp #8
+        beq DUMP_
+        jmp DUMP1
+        
+DUMPerr     
+        vout 22,0,_ERROR   ; Video out error message       
+DUMP_        
         rts
         
 ; ***************************************************
-; HELLO: Print Hello message on row 22
+; GO: Run subrouitne
 ;   INPUT   
 ;   OUPUT
 ;   AFFECTS 
 ; ***************************************************
 
 GO
+; scroll and clear line 22
         scroll
         clearline 22
-        vout 22,0,_S3   ; Video out hello message
+
+; skip to first non empty char
+        ldy #0
+GO0        
+        lda (PVAR1),y   ; Get next char
+        beq GOerr
+        iny
+        cmp #' '        ; if is space go to next char 
+        beq GO0
+        dey
+        jsr GETADR
+        bmi GOerr      ; not a valid address
+
+; jump subroutine pointed by PVAR2
+
+        lda PVAR2
+        sta JMPADR
+        lda PVAR2+1
+        sta JMPADR+1       
+        jsr SYSCALL
+        jmp GO_
+
+GOerr     
+        vout 22,0,_ERROR   ; Video out error message
+GO_
         rts
         
 ; **************************************
@@ -479,9 +732,8 @@ JUMPTABLE
 ; Strings 
 ; **************************************
 
-_SYSNAME db "PPS-2",0
-_S1      db "HELLO THIS IS PPS-2 SYSTEM MONITOR V1.0",0
-_S2      db "THIS IS DUMP",0
+_HELLO   db "HELLO THIS IS PPS-2 SYSTEM MONITOR V1.0",0
+_ERROR   db "*** ERROR ***",0
 _S3      db "THIS IS GO",0
 KEYWORD  db "HELLO DUMP GO ",0 
  
